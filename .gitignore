@@ -1,1 +1,7 @@
+.stack-work
+.idea
+out
+*.iml
+*.lock
 .DS_Store
+
