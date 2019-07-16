@@ -87,35 +87,60 @@ main = Distribution.Simple.defaultMain
 import qualified Program
 
 main :: IO ()
-main = Program.main
+main = Program.run
+
+{-# START_FILE LICENSE #-}
+Copyright (c) 2018 Leigh Perry
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions: 
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software. 
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE. 
 
 {-# START_FILE test/Main.hs #-}
--- Tasty makes it easy to test your code. It is a test framework that can
--- combine many different types of tests into one suite. See its website for
--- help: <http://documentup.com/feuerbach/tasty>.
+import Program
 import qualified Test.Tasty
-
--- Hspec is one of the providers for Tasty. It provides a nice syntax for
--- writing tests. Its website has more info: <https://hspec.github.io>.
 import Test.Tasty.Hspec
 
 main :: IO ()
 main = do
-  test <- testSpec "make-hs-template" spec
+  test <- testSpec "lptemplateservicename" spec
   Test.Tasty.defaultMain test
 
 spec :: Spec
 spec =
   parallel $ do
-    it "is trivially true" $ True `shouldBe` True
-    it "is trivially invertible" $ False `shouldBe` not True
+    it "matches directory to be included" $ Program.isRelevantDir "/srcFilepath" "/srcFilepath/path" `shouldBe` True
+    it "matches directory .git to be excluded" $
+      Program.isRelevantDir "/srcFilepath" "/srcFilepath/.git" `shouldBe` False
+    it "matches directory .stack-work to be excluded" $
+      Program.isRelevantDir "/srcFilepath" "/srcFilepath/.stack-work" `shouldBe` False
+    it "is not fooled by directory .stack-workxxx" $
+      Program.isRelevantDir "/srcFilepath" "/srcFilepath/.stack-workxxx" `shouldBe` True
+    it "matches stack.yaml.lock to be excluded" $
+      Program.isRelevantFile "/srcFilepath" "/srcFilepath/stack.yaml.lock" "stack.yaml.lock" `shouldBe` False
+    it "is not fooled by stack.yaml.lockxxx" $
+      Program.isRelevantFile "/srcFilepath" "/srcFilepath/stack.yaml.lockxxx" "stack.yaml.lockxxx" `shouldBe` True
 
 {-# START_FILE README.md #-}
-# make-hs-template
+# lptemplateservicename
 
-## Overview
+`lptemplateservicename` is an application that supports the creation of `stack new` templates.
 
-`make-hs-template` is an application that targets the create of `stack new` templates.
+## Background
 
 `stack new` takes a file with the extension `.hsfiles` such as
 [this](https://github.com/leigh-perry/template-haskell/blob/master/lpskel.hsfiles)
@@ -125,97 +150,17 @@ with the `{-# START_FILE #-}` pragma. When the template is passed to `stack new`
 Stack will create those files and any specified directories according to the `{-# START_FILE #-}`
 pragmas, eg `{-# START_FILE src/Program.hs #-}` will be expanded as a file `src/Program.hs`.
 
-Preparing and maintaining the contents of the `.hsfiles` file is painful. With this app,
-you can point it a sample project and its subdirectories. `make-hs-template` will then crunch
-the sample project files it into an overall `.hsfiles`.
+## Why This App?
 
-`make-hs-template` omits files and directories such as `.git` and `out`.
+Preparing and maintaining the contents of the `.hsfiles` file is painful. With this app,
+you can point it a sample project and its subdirectories. `lptemplateservicename` will then crunch
+the sample project files into an overall `.hsfiles`.
+
+`lptemplateservicename` omits files and directories such as `.git` and `out`.
 
 ## Usage
 
-`make-hs-template <base input directory> <target hsfiles path>`
-
-{-# START_FILE make-hs-template.cabal #-}
-cabal-version: 1.12
-
--- This file has been generated from package.yaml by hpack version 0.31.2.
---
--- see: https://github.com/sol/hpack
---
--- hash: 9429da4b89d02501c31c7cf41d01d32bec7f74625b884c728ef4d8c52eaff705
-
-name:           make-hs-template
-version:        0.0.0
-homepage:       https://github.com/githubuser/make-hs-template#readme
-bug-reports:    https://github.com/githubuser/make-hs-template/issues
-author:         Author name here
-maintainer:     Author name here
-license:        MIT
-build-type:     Simple
-extra-source-files:
-    package.yaml
-    README.md
-    stack.yaml
-
-source-repository head
-  type: git
-  location: https://github.com/githubuser/make-hs-template
-
-library
-  exposed-modules:
-      Program
-  other-modules:
-      Paths_make_hs_template
-  hs-source-dirs:
-      src
-  ghc-options: -Wall
-  build-depends:
-      base
-    , directory
-    , filepath
-    , unix
-  default-language: Haskell2010
-
-executable make-hs-template
-  main-is: Main.hs
-  other-modules:
-      Paths_make_hs_template
-  hs-source-dirs:
-      app
-  ghc-options: -Wall -rtsopts -threaded -with-rtsopts=-N
-  build-depends:
-      base
-    , make-hs-template
-  default-language: Haskell2010
-
-test-suite make-hs-template-test-suite
-  type: exitcode-stdio-1.0
-  main-is: Main.hs
-  other-modules:
-      Paths_make_hs_template
-  hs-source-dirs:
-      test
-  ghc-options: -Wall -rtsopts -threaded -with-rtsopts=-N
-  build-depends:
-      base
-    , make-hs-template
-    , tasty
-    , tasty-hspec
-  default-language: Haskell2010
-
-benchmark make-hs-template-benchmarks
-  type: exitcode-stdio-1.0
-  main-is: Main.hs
-  other-modules:
-      Paths_make_hs_template
-  hs-source-dirs:
-      benchmark
-  ghc-options: -Wall -rtsopts -threaded -with-rtsopts=-N
-  build-depends:
-      base
-    , criterion
-    , make-hs-template
-  default-language: Haskell2010
+`lptemplateservicename <base input directory> <target hsfiles path>`
 
 {-# START_FILE .gitignore #-}
 .stack-work
@@ -231,14 +176,14 @@ out
 # This YAML file describes your package. Stack will automatically generate a
 # Cabal file when you run `stack build`. See the hpack website for help with
 # this file: <https://github.com/sol/hpack>.
-name: make-hs-template
+name: lptemplateservicename
 version: '0.0.0'
-github: "githubuser/make-hs-template"
+github: "githubuser/lptemplateservicename"
 license: MIT
 author: "Author name here"
 maintainer: "Author name here"
 # synopsis: A new template package.
-# description: make-hs-template is a new template package.
+# description: lptemplateservicename is a new template package.
 # category: Other
 
 extra-source-files:
@@ -257,24 +202,24 @@ library:
   source-dirs: src
 
 executables:
-  make-hs-template:
+  lptemplateservicename:
     source-dirs: app
     main: Main.hs
     dependencies:
     - base
-    - make-hs-template
+    - lptemplateservicename
     ghc-options:
     - -rtsopts
     - -threaded
     - -with-rtsopts=-N
 
 benchmarks:
-  make-hs-template-benchmarks:
+  lptemplateservicename-benchmarks:
     source-dirs: benchmark
     main: Main.hs
     dependencies:
     - base
-    - make-hs-template
+    - lptemplateservicename
     - criterion
     ghc-options:
     - -rtsopts
@@ -282,12 +227,12 @@ benchmarks:
     - -with-rtsopts=-N
 
 tests:
-  make-hs-template-test-suite:
+  lptemplateservicename-test-suite:
     source-dirs: test
     main: Main.hs
     dependencies:
     - base
-    - make-hs-template
+    - lptemplateservicename
     - tasty
     - tasty-hspec
     ghc-options:
@@ -297,7 +242,9 @@ tests:
 
 {-# START_FILE src/Program.hs #-}
 module Program
-  ( main
+  ( run
+  , isRelevantDir
+  , isRelevantFile
   ) where
 
 import Control.Monad
@@ -308,57 +255,65 @@ import Data.Functor ((<&>))
 import Data.List (intercalate, isPrefixOf)
 import System.Directory (listDirectory)
 import System.Environment (getArgs)
-import System.FilePath.Posix ((</>))
-import System.FilePath.Posix (takeExtension)
+import System.FilePath.Posix ((</>), takeExtension)
 import System.Posix.Files (getFileStatus, isDirectory)
 
-main :: IO ()
-main = do
+type Filename = String
+
+type TopLevelPath = FilePath
+
+type RelativePath = FilePath
+
+type HsfilesPath = FilePath
+
+type DirPredicate = TopLevelPath -> FilePath -> Bool
+
+type FilePredicate = TopLevelPath -> FilePath -> Filename -> Bool
+
+run :: IO ()
+run = do
   args <- getArgs
   case args of
     [srcFilepath, summaryFile] -> templatise srcFilepath summaryFile
-    _ -> putStrLn "Usage: make_hs_template <source dir> <target.summaryFile>"
+    _ -> putStrLn "Usage: lptemplateservicename <source dir> <target .hsfiles file>"
 
-templatise :: FilePath -> FilePath -> IO ()
+templatise :: TopLevelPath -> HsfilesPath -> IO ()
 templatise srcFilepath summaryFile = do
   files <- relevantFiles srcFilepath srcFilepath isRelevantDir isRelevantFile
   writeTo srcFilepath summaryFile files
   traverse_ putStrLn files
 
-isRelevantDir :: FilePath -> FilePath -> Bool
-isRelevantDir srcFilepath path =
-  not $ any (`isPrefixOf` path) ([".git", ".idea", ".stack-work", "out"] <&> (srcFilepath </>))
+isRelevantDir :: DirPredicate
+isRelevantDir srcFilepath path = not $ any (`isPrefixOf` pathWithSlash) exclusionList
+  where
+    pathWithSlash = path <> "/"
+    exclusionList = [".git", ".idea", ".stack-work", "out"] <&> (\s -> (srcFilepath </> s) <> "/")
 
-isRelevantFile :: FilePath -> FilePath -> FilePath -> Bool
-isRelevantFile _ _ fp = fp `notElem` [".DS_Store", "stack.yaml.lock"] && takeExtension fp /= ".iml"
+isRelevantFile :: FilePredicate
+isRelevantFile _ _ filename = filename `notElem` [".DS_Store", "stack.yaml.lock"] && takeExtension filename /= ".iml"
 
-relevantFiles ::
-     FilePath
-  -> FilePath
-  -> (FilePath -> FilePath -> Bool)
-  -> (FilePath -> FilePath -> FilePath -> Bool)
-  -> IO [FilePath]
+relevantFiles :: TopLevelPath -> FilePath -> DirPredicate -> FilePredicate -> IO [RelativePath]
 relevantFiles srcFilepath dir includeDirPredicate includeFilePredicate = do
   ds <- listDirectory dir
   paths <-
-    forM ds $ \fp -> do
-      let path = dir </> fp
-      s <- getFileStatus path
+    forM ds $ \filename -> do
+      let filepath = dir </> filename
+      s <- getFileStatus filepath
       if isDirectory s
-        then if includeDirPredicate srcFilepath path
-               then relevantFiles srcFilepath path includeDirPredicate includeFilePredicate
+        then if includeDirPredicate srcFilepath filepath
+               then relevantFiles srcFilepath filepath includeDirPredicate includeFilePredicate
                else return []
-        else if includeFilePredicate srcFilepath path fp
-               then return [path]
+        else if includeFilePredicate srcFilepath filepath filename
+               then return [filepath]
                else return []
   return $ concat paths
 
-writeTo :: FilePath -> FilePath -> [FilePath] -> IO ()
+writeTo :: TopLevelPath -> HsfilesPath -> [RelativePath] -> IO ()
 writeTo srcFilepath summaryFile files = do
   contents <- forM files $ fileContents srcFilepath
   writeFile summaryFile $ intercalate "\n" contents
 
-fileContents :: FilePath -> FilePath -> IO String
-fileContents srcFilepath fp =
-  let prefixRemoved = dropWhile (== '/') $ drop (length srcFilepath) fp
-   in readFile fp <&> (\s -> "{-# START_FILE " <> prefixRemoved <> " #-}" <> "\n" <> s)
+fileContents :: TopLevelPath -> FilePath -> IO String
+fileContents srcFilepath filename =
+  let prefixRemoved = dropWhile (== '/') $ drop (length srcFilepath) filename
+   in readFile filename <&> (\s -> "{-# START_FILE " <> prefixRemoved <> " #-}" <> "\n" <> s)
