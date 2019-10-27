@@ -84,10 +84,67 @@ main :: IO ()
 main = Distribution.Simple.defaultMain
 
 {-# START_FILE app/Main.hs #-}
-import qualified Program
+{-# LANGUAGE FlexibleContexts #-}
+
+import           Analyser
+import           Control.Monad.Except       (MonadError)
+import           Control.Monad.Trans.Except
+import           Data.Semigroup             ((<>))
+import           Options.Applicative
 
 main :: IO ()
-main = Program.run
+main = do
+  options <- execParser (cmdOptions ? "Bank check operations")
+  result <- runExceptT $ run options
+  case result of
+    Left s  -> putStrLn $ "Error: " <> show s
+    Right _ -> return ()
+
+type DateString = String -- "20190111"
+
+type WhitelistFilepath = String
+
+type AmountGte = Integer
+
+type AmountLt = Integer
+
+data Command
+  = AnalyseTotals [FilePath] (Maybe WhitelistFilepath) (Maybe AmountGte) (Maybe AmountLt)
+  | AnalyseSince DateString [FilePath] (Maybe WhitelistFilepath)
+
+data Options =
+  Options (Maybe String) Command
+
+run :: (MonadError AnalyserError m, FileOps m, ConsoleOps m) => Options -> m ()
+run (Options _ cmd) =
+  case cmd of
+    AnalyseTotals filepaths whitelistFilepath filterGte filterLt -> analyseTotals filepaths whitelistFilepath filters
+      where filters = toList filterGte txnFilterGteCents <> toList filterLt txnFilterLtCents
+            toList m f =
+              case m of
+                Nothing -> []
+                Just d  -> [f (d * 100)]
+    AnalyseSince startDate filepaths whitelistFilepath -> analyseSince startDate filepaths whitelistFilepath
+
+-- approach from https://thoughtbot.com/blog/applicative-options-parsing-in-haskell
+cmdOptions :: Parser Options
+cmdOptions =
+  Options <$>
+  optional (strOption (short 'g' <> long "global-option" <> metavar "GLOBALOPTION" <> help "Some option global to all commands")) <*>
+  subparser (command "totals" totals <> command "since" since)
+  where
+    totals =
+      (AnalyseTotals <$> filepaths <*> optional whitelist <*>
+       optional (option auto (short 'a' <> long "filter-gte" <> metavar "DOLLARS" <> help "Filter txns >= dollar amount")) <*>
+       optional (option auto (short 'b' <> long "filter-lt" <> metavar "DOLLARS" <> help "Filter txns < dollar amount"))) ?
+      "Analyse statement totals in specified files"
+    since = (AnalyseSince <$> sinceDate <*> filepaths <*> optional whitelist) ? "Analyse entries since date"
+    filepaths = some (argument str (metavar "SOURCE-FILEPATH"))
+    sinceDate = argument str (metavar "YYYYMMDD")
+    whitelist = strOption (short 'w' <> long "whitelist" <> metavar "WHITELIST FILE" <> help "File of whitelisted vendors")
+
+(?) :: Parser a -> String -> ParserInfo a
+(?) opts desc = info (helper <*> opts) $ progDesc desc
 
 {-# START_FILE LICENSE #-}
 Copyright (c) 2018 Leigh Perry
@@ -111,56 +168,143 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE. 
 
 {-# START_FILE test/Main.hs #-}
-import Program
-import qualified Test.Tasty
-import Test.Tasty.Hspec
+{-# LANGUAGE OverloadedStrings #-}
+
+import qualified Data.List as List
+import Hedgehog
+import qualified Hedgehog.Gen as Gen
+import qualified Hedgehog.Range as Range
 
 main :: IO ()
 main = do
-  test <- testSpec "lptemplateservicename" spec
-  Test.Tasty.defaultMain test
+  result <- tests
+  putStrLn $
+    if result
+      then "All tests passed"
+      else "At least one test failed"
 
-spec :: Spec
-spec =
-  parallel $ do
-    it "matches directory to be included" $ Program.isRelevantDir "/srcFilepath" "/srcFilepath/path" `shouldBe` True
-    it "matches directory .git to be excluded" $
-      Program.isRelevantDir "/srcFilepath" "/srcFilepath/.git" `shouldBe` False
-    it "matches directory .stack-work to be excluded" $
-      Program.isRelevantDir "/srcFilepath" "/srcFilepath/.stack-work" `shouldBe` False
-    it "is not fooled by directory .stack-workxxx" $
-      Program.isRelevantDir "/srcFilepath" "/srcFilepath/.stack-workxxx" `shouldBe` True
-    it "matches stack.yaml.lock to be excluded" $
-      Program.isRelevantFile "/srcFilepath" "/srcFilepath/stack.yaml.lock" "stack.yaml.lock" `shouldBe` False
-    it "is not fooled by stack.yaml.lockxxx" $
-      Program.isRelevantFile "/srcFilepath" "/srcFilepath/stack.yaml.lockxxx" "stack.yaml.lockxxx" `shouldBe` True
+tests :: IO Bool
+tests = checkParallel $ Group "Some group" [("List reversing", testReverse), ("List reversing too", testReverse2)]
+
+genIntList :: Gen [Int]
+genIntList =
+  let listLength = Range.linear 0 100
+   in Gen.list listLength Gen.enumBounded
+
+testReverse :: Property
+testReverse =
+  property $ do
+    xs <- forAll genIntList
+    List.reverse (List.reverse xs) === xs
+
+testReverse2 :: Property
+testReverse2 =
+  withTests 10 . property $ do
+    xs <- forAll genIntList
+    List.reverse (List.reverse xs) === xs
+
+{-# START_FILE totals.sh #-}
+#!/bin/bash
+
+EXEPATH=$(find . -iname bankcheck | grep install | grep bin)
+# set -x
+${EXEPATH} totals -w ~/Dropbox/LPSM/personal/visa/whitelist.csv ~/Dropbox/LPSM/personal/visa/20*.csv "$@"
+
+{-# START_FILE bankcheck.cabal #-}
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.31.2.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: f37bda70e113c462b6a4d96e26c78502a48dc858edb851e82722d65925a970cf
+
+name:           bankcheck
+version:        0.0.0
+homepage:       https://github.com/githubuser/bankcheck#readme
+bug-reports:    https://github.com/githubuser/bankcheck/issues
+author:         Leigh Perry
+maintainer:     Leigh Perry
+license:        MIT
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    package.yaml
+    README.md
+    stack.yaml
+
+source-repository head
+  type: git
+  location: https://github.com/githubuser/bankcheck
+
+library
+  exposed-modules:
+      Analyser
+  other-modules:
+      Paths_bankcheck
+  hs-source-dirs:
+      src
+  ghc-options: -Wall
+  build-depends:
+      MissingH
+    , base
+    , bytestring
+    , cassava
+    , containers
+    , mtl
+    , parsec
+    , regex-posix
+    , text
+    , transformers
+    , vector
+  default-language: Haskell2010
+
+executable bankcheck
+  main-is: Main.hs
+  other-modules:
+      Paths_bankcheck
+  hs-source-dirs:
+      app
+  ghc-options: -Wall -rtsopts -threaded -with-rtsopts=-N
+  build-depends:
+      bankcheck
+    , base
+    , bytestring
+    , mtl
+    , optparse-applicative
+    , transformers
+  default-language: Haskell2010
+
+test-suite bankcheck-test-suite
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+      Paths_bankcheck
+  hs-source-dirs:
+      test
+  ghc-options: -Wall -rtsopts -threaded -with-rtsopts=-N
+  build-depends:
+      bankcheck
+    , base
+    , hedgehog
+  default-language: Haskell2010
+
+benchmark bankcheck-benchmarks
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+      Paths_bankcheck
+  hs-source-dirs:
+      benchmark
+  ghc-options: -Wall -rtsopts -threaded -with-rtsopts=-N
+  build-depends:
+      bankcheck
+    , base
+  default-language: Haskell2010
 
 {-# START_FILE README.md #-}
-# lptemplateservicename
+# bankcheck
 
-`lptemplateservicename` is an application that supports the creation of `stack new` templates.
-
-## Background
-
-`stack new` takes a file with the extension `.hsfiles` such as
-[this](https://github.com/leigh-perry/template-haskell/blob/master/lpskel.hsfiles)
-and uses the contents of that file as a template.
-`.hsfiles` files can specify multiple files by separating the contents of those files
-with the `{-# START_FILE #-}` pragma. When the template is passed to `stack new`,
-Stack will create those files and any specified directories according to the `{-# START_FILE #-}`
-pragmas, eg `{-# START_FILE src/Program.hs #-}` will be expanded as a file `src/Program.hs`.
-
-## Why This App?
-
-Preparing and maintaining the contents of the `.hsfiles` file is painful. With this app,
-you can point it a sample project and its subdirectories. `lptemplateservicename` will then crunch
-the sample project files into an overall `.hsfiles`.
-
-`lptemplateservicename` omits files and directories such as `.git` and `out`.
-
-## Usage
-
-`lptemplateservicename <base input directory> <target hsfiles path>`
 
 {-# START_FILE .gitignore #-}
 .stack-work
@@ -172,18 +316,25 @@ out
 
 /*.cabal
 
+{-# START_FILE since.sh #-}
+#!/bin/bash
+
+EXEPATH=$(find . -iname bankcheck | grep install | grep bin)
+# set -x
+${EXEPATH} since $1 -w ~/Dropbox/LPSM/personal/visa/whitelist.csv ~/Dropbox/LPSM/personal/visa/20*.csv 
+
 {-# START_FILE package.yaml #-}
 # This YAML file describes your package. Stack will automatically generate a
 # Cabal file when you run `stack build`. See the hpack website for help with
 # this file: <https://github.com/sol/hpack>.
-name: lptemplateservicename
+name: bankcheck
 version: '0.0.0'
-github: "githubuser/lptemplateservicename"
+github: "githubuser/bankcheck"
 license: MIT
-author: "Author name here"
-maintainer: "Author name here"
+author: "Leigh Perry"
+maintainer: "Leigh Perry"
 # synopsis: A new template package.
-# description: lptemplateservicename is a new template package.
+# description: bankcheck is a new template package.
 # category: Other
 
 extra-source-files:
@@ -196,124 +347,319 @@ ghc-options: -Wall
 library:
   dependencies:
   - base
-  - directory
-  - filepath
-  - unix
+  - cassava
+  - text
+  - vector
+  - bytestring
+  - parsec
+  - transformers
+  - MissingH
+  - containers
+  - regex-posix
+  - mtl
   source-dirs: src
 
 executables:
-  lptemplateservicename:
+  bankcheck:
     source-dirs: app
     main: Main.hs
     dependencies:
     - base
-    - lptemplateservicename
+    - bankcheck
+    - optparse-applicative
+    - transformers
+    - mtl
+    - bytestring
     ghc-options:
     - -rtsopts
     - -threaded
     - -with-rtsopts=-N
 
 benchmarks:
-  lptemplateservicename-benchmarks:
+  bankcheck-benchmarks:
     source-dirs: benchmark
     main: Main.hs
     dependencies:
     - base
-    - lptemplateservicename
-    - criterion
+    - bankcheck
     ghc-options:
     - -rtsopts
     - -threaded
     - -with-rtsopts=-N
 
 tests:
-  lptemplateservicename-test-suite:
+  bankcheck-test-suite:
     source-dirs: test
     main: Main.hs
     dependencies:
     - base
-    - lptemplateservicename
-    - tasty
-    - tasty-hspec
+    - bankcheck
+    - hedgehog
     ghc-options:
     - -rtsopts
     - -threaded
     - -with-rtsopts=-N
 
-{-# START_FILE src/Program.hs #-}
-module Program
-  ( run
-  , isRelevantDir
-  , isRelevantFile
+{-# START_FILE src/Analyser.hs #-}
+{-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
+
+module Analyser
+  ( analyseTotals
+  , analyseSince
+  , AnalyserError
+  , TxnFilter
+  , txnFilterNone
+  , txnFilterGteCents
+  , txnFilterLtCents
+  , FileOps
+  , readBinFile
+  , ConsoleOps
+  , println
   ) where
 
-import Control.Monad
+import           Control.Monad                 (join)
+import           Control.Monad.Except          (ExceptT, MonadError, lift,
+                                                liftEither)
+import           Data.Bifunctor                (bimap, first)
+import qualified Data.ByteString.Lazy          as BL
+import           Data.Csv                      ((.:))
+import qualified Data.Csv                      as Csv
+import           Data.Foldable                 (toList, traverse_)
+import           Data.List                     (sortOn)
+import qualified Data.List.Utils               as U (uniq)
+import           Data.Map                      (assocs)
+import qualified Data.Map                      as M
+import           Data.Monoid
+import           Data.Text                     as T hiding (all, any, break,
+                                                     filter, groupBy, reverse)
+import qualified Data.Vector                   as V
+import           Text.Parsec                   (ParseError, (<|>))
+import           Text.Parsec.Char              as PC
+import qualified Text.ParserCombinators.Parsec as P
+import           Text.Printf                   (printf)
+import           Text.Regex.Posix              ((=~))
 
---import Debug.Trace
-import Data.Foldable (traverse_)
-import Data.Functor ((<&>))
-import Data.List (intercalate, isPrefixOf)
-import System.Directory (listDirectory)
-import System.Environment (getArgs)
-import System.FilePath.Posix ((</>), takeExtension)
-import System.Posix.Files (getFileStatus, isDirectory)
+----
+class FileOps m where
+  readBinFile :: FilePath -> m BL.ByteString
 
-type Filename = String
+class ConsoleOps m where
+  println :: String -> m ()
 
-type TopLevelPath = FilePath
+----
+instance FileOps (ExceptT AnalyserError IO) where
+  readBinFile a = lift $ BL.readFile a
 
-type RelativePath = FilePath
+instance ConsoleOps (ExceptT AnalyserError IO) where
+  println a = lift $ putStrLn a
 
-type HsfilesPath = FilePath
+----
+data TxnFilter
+  = TxnFilterNone
+  | TxnFilterGteCents Integer
+  | TxnFilterLtCents Integer
 
-type DirPredicate = TopLevelPath -> FilePath -> Bool
+txnFilterNone :: TxnFilter
+txnFilterNone = TxnFilterNone
 
-type FilePredicate = TopLevelPath -> FilePath -> Filename -> Bool
+txnFilterGteCents :: Integer -> TxnFilter
+txnFilterGteCents = TxnFilterGteCents
 
-run :: IO ()
-run = do
-  args <- getArgs
-  case args of
-    [srcFilepath, summaryFile] -> templatise srcFilepath summaryFile
-    _ -> putStrLn "Usage: lptemplateservicename <source dir> <target .hsfiles file>"
+txnFilterLtCents :: Integer -> TxnFilter
+txnFilterLtCents = TxnFilterLtCents
 
-templatise :: TopLevelPath -> HsfilesPath -> IO ()
-templatise srcFilepath summaryFile = do
-  files <- relevantFiles srcFilepath srcFilepath isRelevantDir isRelevantFile
-  writeTo srcFilepath summaryFile files
-  traverse_ putStrLn files
+----
+analyseTotals :: (MonadError AnalyserError m, FileOps m, ConsoleOps m) => [FilePath] -> Maybe String -> [TxnFilter] -> m ()
+analyseTotals filepaths whitelistFilepath txnFilter = do
+  whitelisted <- ingest filepaths whitelistFilepath
+  let byVendor = groupBy $ keyByVendor <$> whitelisted
+  -- aggregate number of txns and total
+  let totalsByVendor = foldMap (\e -> (Sum 1, Sum (cents $ -(eAmount e)))) <$> byVendor
+  let filtered = filter (passesTxnFilters txnFilter . snd) $ assocs totalsByVendor
+  let sorted = reverse $ sortOn (snd . snd) filtered
+  traverse_ println $ formatTotal <$> sorted
 
-isRelevantDir :: DirPredicate
-isRelevantDir srcFilepath path = not $ any (`isPrefixOf` pathWithSlash) exclusionList
+analyseSince :: (MonadError AnalyserError m, FileOps m, ConsoleOps m) => String -> [FilePath] -> Maybe String -> m ()
+analyseSince startDate filepaths whitelistFilepath = do
+  whitelisted <- ingest filepaths whitelistFilepath
+  let (before, after) = break (\e -> unpack (eEnteredDate e) >= startDate) whitelisted
+  -- find entries in `after` that have never been seen `before`
+  let beforebyVendor = groupBy $ keyByVendor <$> before
+  let previouslyUnseen =
+        filter
+          (\e ->
+             case eDetail e of
+               Txn _ v _ _ -> not (M.member v beforebyVendor)
+               General _   -> True)
+          after
+  traverse_ println $ formatEntry <$> previouslyUnseen
+
+----
+ingest :: (MonadError AnalyserError m, FileOps m) => [FilePath] -> Maybe String -> m [Entry]
+ingest filepaths whitelistFilepath = do
+  files <- traverse parseEntryFile filepaths
+  whitelist <-
+    case whitelistFilepath of
+      Just wl -> parseWhitelist wl
+      Nothing -> return []
+  let entries = sortOn cEnteredDate $ U.uniq $ join files
+  es <- traverse parseDescription entries
+  return $ filterWhitelist whitelist es
+
+----
+parseDescription :: (MonadError AnalyserError m) => CsvEntry -> m Entry
+parseDescription v = do
+  detail <- liftEither $ first ParseDescriptionError $ P.parse detailParser "Description" $ unpack (cDescription v)
+  return $ Entry (cEffectiveDate v) (cEnteredDate v) detail (cAmount v) (cBalance v)
+
+-- remove any records where entry in whitelist and amount is less than limit
+filterWhitelist :: [WhitelistEntry] -> [Entry] -> [Entry]
+filterWhitelist wls =
+  filter
+    (\e ->
+       case eDetail e of
+         Txn _ v _ _ -> not (any (shouldHide e v) wls)
+         General _   -> True)
   where
-    pathWithSlash = path <> "/"
-    exclusionList = [".git", ".idea", ".stack-work", "out"] <&> (\s -> (srcFilepath </> s) <> "/")
+    shouldHide e v w = unpack v =~ unpack (wVendorRegex w) && -(eAmount e) < wTxnLimit w
 
-isRelevantFile :: FilePredicate
-isRelevantFile _ _ filename = filename `notElem` [".DS_Store", "stack.yaml.lock"] && takeExtension filename /= ".iml"
+groupBy :: Ord k => [(k, a)] -> M.Map k [a]
+groupBy kvs = M.fromListWith (<>) [(k, [v]) | (k, v) <- kvs]
 
-relevantFiles :: TopLevelPath -> FilePath -> DirPredicate -> FilePredicate -> IO [RelativePath]
-relevantFiles srcFilepath dir includeDirPredicate includeFilePredicate = do
-  ds <- listDirectory dir
-  paths <-
-    forM ds $ \filename -> do
-      let filepath = dir </> filename
-      s <- getFileStatus filepath
-      if isDirectory s
-        then if includeDirPredicate srcFilepath filepath
-               then relevantFiles srcFilepath filepath includeDirPredicate includeFilePredicate
-               else return []
-        else if includeFilePredicate srcFilepath filepath filename
-               then return [filepath]
-               else return []
-  return $ concat paths
+keyByVendor :: Entry -> (Text, Entry)
+keyByVendor e =
+  case e of
+    Entry _ _ (Txn _ vendor _ _) _ _ -> (vendor, e)
+    Entry _ _ (General _) _ _        -> ("(none)", e)
 
-writeTo :: TopLevelPath -> HsfilesPath -> [RelativePath] -> IO ()
-writeTo srcFilepath summaryFile files = do
-  contents <- forM files $ fileContents srcFilepath
-  writeFile summaryFile $ intercalate "\n" contents
+type Agg = (Sum Integer, Sum Integer)
 
-fileContents :: TopLevelPath -> FilePath -> IO String
-fileContents srcFilepath filename =
-  let prefixRemoved = dropWhile (== '/') $ drop (length srcFilepath) filename
-   in readFile filename <&> (\s -> "{-# START_FILE " <> prefixRemoved <> " #-}" <> "\n" <> s)
+passesTxnFilters :: [TxnFilter] -> Agg -> Bool
+passesTxnFilters fs a = all (passesTxnFilter a) fs
+
+passesTxnFilter :: Agg -> TxnFilter -> Bool
+passesTxnFilter _ TxnFilterNone         = True
+passesTxnFilter a (TxnFilterGteCents c) = getSum (snd a) >= c
+passesTxnFilter a (TxnFilterLtCents c)  = getSum (snd a) < c
+
+formatTotal :: (Text, Agg) -> String
+formatTotal (v, (c, t)) = unpack v <> ": " <> show (getSum c) <> " @ $" <> show (dollars $ getSum t)
+
+-- Entry {eEffectiveDate = "", eEnteredDate = "20191003", eDetail = Txn {eType = Purchase, eVendor = "NAZARI", eDetails = "GRANADA      ESFRGN AMT-55.000000#0457223", eRef = "100300976257"}, eAmount = -92.59, eBalance = -11075.28}
+formatEntry :: Entry -> String
+formatEntry e =
+  case e of
+    Entry _ date (Txn ttype vendor details _) amt _ ->
+      printf "%s %-25s $%8.2f  %-42s (%s)" date vendor (-amt) details (show ttype)
+    Entry _ date (General g) _ _ -> printf "%s                                      %s" date g
+
+----
+-- Effective Date,Entered Date,Transaction Description,Amount,Balance
+-- ,20190701,"VISA-TRANSPORTFORNSW OPAL     CHIPPENDALE  AU#0428976(Ref.070100303466)",-20.00,-11846.85
+data CsvEntry =
+  CsvEntry
+    { cEffectiveDate :: !Text
+    , cEnteredDate   :: !Text
+    , cDescription   :: !Text
+    , cAmount        :: !Double
+    , cBalance       :: !Double
+    }
+  deriving (Show, Eq)
+
+data TxnType
+  = Purchase
+  | Refund
+  deriving (Show, Eq)
+
+data Detail
+  = General
+      { gDescription :: !Text
+      }
+  | Txn
+      { eType    :: !TxnType
+      , eVendor  :: !Text
+      , eDetails :: !Text
+      , eRef     :: !Text
+      }
+  deriving (Show, Eq)
+
+data Entry =
+  Entry
+    { eEffectiveDate :: !Text
+    , eEnteredDate   :: !Text
+    , eDetail        :: !Detail
+    , eAmount        :: !Double
+    , eBalance       :: !Double
+    }
+  deriving (Show, Eq)
+
+data WhitelistEntry =
+  WhitelistEntry
+    { wVendorRegex :: !Text
+    , wTxnLimit    :: !Double
+    }
+  deriving (Show, Eq)
+
+cents :: Double -> Integer
+cents = round . (* 100.0)
+
+dollars :: Integer -> Double
+dollars = (/ 100.0) . fromIntegral
+
+data AnalyserError
+  = ParseEntryError String
+  | ParseDescriptionError ParseError
+  | ParseWhitelistError String
+  deriving (Show, Eq)
+
+instance Csv.FromNamedRecord CsvEntry where
+  parseNamedRecord r =
+    CsvEntry <$> r .: "Effective Date" <*> r .: "Entered Date" <*> r .: "Transaction Description" <*> r .: "Amount" <*>
+    r .: "Balance"
+
+parseEntryFile :: (MonadError AnalyserError m, FileOps m) => String -> m [CsvEntry]
+parseEntryFile filepath = do
+  csvData <- readBinFile filepath
+  let d = Csv.decodeByName csvData :: Either String (Csv.Header, V.Vector CsvEntry)
+  liftEither $ bimap ParseEntryError (toList . snd) d
+
+instance Csv.FromNamedRecord WhitelistEntry where
+  parseNamedRecord r = WhitelistEntry <$> r .: "Vendor Regex" <*> r .: "Per Txn Limit"
+
+parseWhitelist :: (MonadError AnalyserError m, FileOps m) => String -> m [WhitelistEntry]
+parseWhitelist filepath = do
+  csvData <- readBinFile filepath
+  let d = Csv.decodeByName csvData :: Either String (Csv.Header, V.Vector WhitelistEntry)
+  let result = bimap ParseWhitelistError (toList . snd) d
+  liftEither result
+
+fixedLengthStr :: Int -> P.Parser String
+fixedLengthStr n = P.count n anyChar
+
+detailParser :: P.Parser Detail
+detailParser = txnParser <|> generalParser
+
+-- "VISA"[" Refund"]"-"{1234567890123456789012345}{"varlength"}"(Ref."{123456789012}")"
+txnParser :: P.Parser Detail
+txnParser = do
+  refundInd <- string "VISA" *> P.optionMaybe (string " Refund") <* char '-'
+  vendor <- fixedLengthStr 25
+  let sref = string "(Ref."
+  details <- P.manyTill anyChar $ P.try $ P.lookAhead sref
+  refno <- sref *> fixedLengthStr 12 <* char ')'
+  return $
+    Txn
+      (case refundInd of
+         Just _  -> Refund
+         Nothing -> Purchase)
+      (strip $ pack vendor)
+      (pack details)
+      (pack refno)
+
+-- "Cash Advances Interest: $1.98"
+generalParser :: P.Parser Detail
+generalParser = do
+  details <- P.many anyChar
+  return $ General (pack details)
